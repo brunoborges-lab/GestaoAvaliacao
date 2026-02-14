@@ -2,123 +2,65 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="Consolidador UFCD - K13", layout="wide")
+st.set_page_config(page_title="Gestor de Avaliação UFCD", layout="wide")
 
-st.title("📋 Consolidação (Importação K13)")
-st.info("Configurado para ler nomes a partir da célula K13 do ficheiro de importação.")
+st.title("📊 Sistema de Gestão de Notas - UFCD 9889")
 
 # --- BARRA LATERAL ---
 with st.sidebar:
-    st.header("1. Ficheiro Mestre (Importação)")
-    arquivo_importacao = st.file_uploader("Carregue a lista (Nomes em K13)", type=["xlsx", "xls"], key="mestre")
-    
-    st.header("2. Ficheiros de Notas (Grelhas)")
-    arquivos_grelha = st.file_uploader("Carregue as grelhas de avaliação", type=["xlsx", "xls"], accept_multiple_files=True, key="grelhas")
+    st.header("📂 Upload de Ficheiros")
+    arquivo_importacao = st.file_uploader("1. Importação (Nomes em K13)", type=["xlsx", "xls"])
+    arquivos_grelha = st.file_uploader("2. Grelhas de Avaliação", type=["xlsx", "xls"], accept_multiple_files=True)
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES DE PROCESSAMENTO ---
 
-def obter_nomes_k13(file):
-    """
-    Lê o ficheiro focando apenas na coluna K e assumindo cabeçalho na linha 13.
-    """
+def extrair_nomes_mestre(file):
     try:
-        # skiprows=12 -> A linha 13 torna-se o cabeçalho
-        # usecols="K" -> Carrega apenas a coluna K
+        # Lê a coluna K a partir da linha 13
         df = pd.read_excel(file, skiprows=12, usecols="K")
-        
-        # Independentemente do nome que estiver na célula K13, vamos chamar-lhe "Nome"
-        # para o código funcionar com o resto da lógica.
         df.columns = ["Nome"]
-        
-        # Limpar linhas vazias
-        return df.dropna().drop_duplicates()
-    except Exception as e:
-        st.error(f"Erro ao ler a coluna K13: {e}")
-        return None
+        return df.dropna(subset=["Nome"]).drop_duplicates()
+    except:
+        return pd.DataFrame(columns=["Nome"])
 
-def processar_grelha_notas(file):
-    """Extrai notas da grelha de avaliação (Lógica da UFCD 9889)"""
+def extrair_detalhes_pratica(file):
     try:
-        # NOTA: Mantive a lógica original para as grelhas.
-        # Se as grelhas também tiverem mudado de sítio, avise-me!
+        # Nas suas grelhas, os dados costumam estar nestas posições:
+        # Nome: Coluna C (Index 2)
+        # Ferramentas: Coluna AC (Index 28)
+        # Equipamentos: Coluna AM (Index 38)
+        # Estabilização: Coluna AW (Index 48)
         df = pd.read_excel(file, skiprows=12)
         
-        # Mapeamento baseado nos ficheiros anteriores:
-        # Coluna C (Index 2) -> Nome na Grelha
-        # Coluna BG (Index 58) -> Média
-        # Coluna BP (Index 67) -> Situação
-        colunas_map = {
+        colunas_pratica = {
             df.columns[2]: "Nome",
-            df.columns[58]: "Média Final",
-            df.columns[67]: "Situação"
+            df.columns[28]: "Ferramentas (60%)",
+            df.columns[38]: "Equipamentos (20%)",
+            df.columns[48]: "Estabilização (20%)",
+            df.columns[58]: "Média Prática"
         }
-        
-        df = df.rename(columns=colunas_map)
-        
-        # Normalização: Retirar espaços extra dos nomes para bater certo com a lista mestre
-        df["Nome"] = df["Nome"].astype(str).str.strip()
-        
-        return df[["Nome", "Média Final", "Situação"]].dropna(subset=["Nome"])
-        
-    except Exception as e:
-        st.warning(f"Não foi possível ler as notas de {file.name}. Verifique se é uma grelha válida.")
+        df_resumo = df.rename(columns=colunas_pratica)
+        return df_resumo[["Nome", "Ferramentas (60%)", "Equipamentos (20%)", "Estabilização (20%)", "Média Prática"]].dropna(subset=["Nome"])
+    except:
         return pd.DataFrame()
 
-# --- LÓGICA PRINCIPAL ---
+# --- LÓGICA DE INTERFACE ---
 
 if arquivo_importacao:
-    # 1. Carregar Nomes da K13
-    df_mestre = obter_nomes_k13(arquivo_importacao)
+    df_mestre = extrair_nomes_mestre(arquivo_importacao)
+    df_mestre["Nome"] = df_mestre["Nome"].astype(str).str.strip()
     
-    if df_mestre is not None and not df_mestre.empty:
-        st.success(f"✅ Lista carregada: {len(df_mestre)} nomes encontrados (Coluna K).")
-        
-        # Garantir que os nomes do mestre não têm espaços "invisíveis"
-        df_mestre["Nome"] = df_mestre["Nome"].astype(str).str.strip()
-        
-        df_final = df_mestre.copy()
+    # Processar grelhas se existirem
+    df_pratica_total = pd.DataFrame()
+    if arquivos_grelha:
+        lista_pratica = [extrair_detalhes_pratica(f) for f in arquivos_grelha]
+        df_pratica_total = pd.concat(lista_pratica, ignore_index=True).drop_duplicates(subset=["Nome"])
 
-        # 2. Processar Grelhas (se existirem)
-        if arquivos_grelha:
-            lista_notas = []
-            for arquivo in arquivos_grelha:
-                notas = processar_grelha_notas(arquivo)
-                lista_notas.append(notas)
-            
-            if lista_notas:
-                df_todas_notas = pd.concat(lista_notas, ignore_index=True)
-                
-                # Remover duplicados nas notas (caso tenha carregado o mesmo ficheiro 2x)
-                df_todas_notas = df_todas_notas.drop_duplicates(subset=["Nome"])
+    # Criar os Separadores (Tabs)
+    tab1, tab2 = st.tabs(["📋 Lista Consolidada", "🛠️ Detalhe Avaliação Prática"])
 
-                # CRUZAMENTO DE DADOS (VLOOKUP)
-                df_final = pd.merge(df_mestre, df_todas_notas, on="Nome", how="left")
-        
-        # 3. Mostrar Editor
-        st.write("### 📝 Pauta Final")
-        
-        df_editado = st.data_editor(
-            df_final,
-            use_container_width=True,
-            num_rows="dynamic",
-            height=600
-        )
-
-        # 4. Download
-        st.divider()
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df_editado.to_excel(writer, index=False, sheet_name='Pauta_K13')
-            
-        st.download_button(
-            label="💾 Descarregar Ficheiro Consolidado",
-            data=buffer.getvalue(),
-            file_name="Pauta_Consolidada.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
-    else:
-        st.error("⚠️ A coluna K parece estar vazia a partir da linha 13.")
-
-else:
-    st.info("👈 Carregue o ficheiro de Importação (onde os nomes estão na K13).")
+    with tab1:
+        st.subheader("Pauta Geral de Avaliação")
+        # União simples para a pauta geral
+        df_geral = pd.merge(df_mestre, df_pratica_total[["Nome", "Média Prática"]], on="Nome", how="left")
+        st.data_editor
