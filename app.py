@@ -2,69 +2,117 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="Gestor UFCD 9889", layout="wide")
+st.set_page_config(page_title="Consolidador UFCD - Lista Mestre", layout="wide")
 
-st.title("🚀 Consolidador Inteligente UFCD")
+st.title("📋 Consolidação por Lista de Importação")
+st.markdown("Esta aplicação usa a coluna **'Nome'** do ficheiro de importação como referência principal.")
 
-# --- SIDEBAR: Configurações de Importação ---
-st.sidebar.header("1. Lista de Formandos")
-import_file = st.sidebar.file_uploader("Ficheiro de Importação (Nomes)", type=["xlsx", "xls"])
+# --- BARRA LATERAL PARA UPLOADS ---
+with st.sidebar:
+    st.header("1. Ficheiro Mestre (Importação)")
+    arquivo_importacao = st.file_uploader("Carregue a lista de formandos", type=["xlsx", "xls"], key="mestre")
+    
+    st.header("2. Ficheiros de Notas (Grelhas)")
+    arquivos_grelha = st.file_uploader("Carregue as grelhas preenchidas", type=["xlsx", "xls"], accept_multiple_files=True, key="grelhas")
 
-st.sidebar.header("2. Ficheiros de Avaliação")
-eval_files = st.sidebar.file_uploader("Grelhas de Avaliação (Notas)", type=["xlsx", "xls"], accept_multiple_files=True)
+# --- FUNÇÕES DE PROCESSAMENTO ---
 
-# Função para extrair nomes do ficheiro de Importação
-def obter_lista_nomes(file):
-    # Ajuste o 'skiprows' ou 'usecols' conforme a estrutura real do seu ficheiro de importação
-    df_imp = pd.read_excel(file)
-    # Procuramos uma coluna que contenha 'Nome'
-    coluna_nome = [col for col in df_imp.columns if 'Nome' in str(col)][0]
-    return df_imp[coluna_nome].dropna().unique().tolist()
+def obter_nomes_mestre(file):
+    """Lê o ficheiro de importação e procura examente a coluna 'Nome'"""
+    try:
+        df = pd.read_excel(file)
+        # Limpar espaços nos nomes das colunas (ex: "Nome " vira "Nome")
+        df.columns = df.columns.str.strip()
+        
+        if "Nome" in df.columns:
+            # Retorna um DataFrame apenas com a coluna Nome, removendo vazios
+            return df[["Nome"]].dropna().drop_duplicates()
+        else:
+            st.error("❌ ERRO: Não encontrei uma coluna chamada 'Nome' no ficheiro de importação.")
+            return None
+    except Exception as e:
+        st.error(f"Erro ao ler ficheiro de importação: {e}")
+        return None
 
-# Função para processar as notas das grelhas
-def processar_notas(file):
-    df = pd.read_excel(file, skiprows=12)
-    # Selecionamos colunas de interesse (ajustado à Grelha UFCD 9889)
-    # Coluna 2 costuma ser o Nome, Coluna 58 a Média, Coluna 67 a Situação
-    cols = {df.columns[2]: "Nome do Formando", df.columns[58]: "Média Final", df.columns[67]: "Situação"}
-    df = df.rename(columns=cols)
-    return df[["Nome do Formando", "Média Final", "Situação"]].dropna(subset=["Nome do Formando"])
+def processar_grelha_notas(file):
+    """Extrai notas da grelha de avaliação"""
+    try:
+        # Pula o cabeçalho decorativo (ajuste o skiprows se necessário)
+        df = pd.read_excel(file, skiprows=12)
+        
+        # Mapeamento das colunas da Grelha UFCD 9889
+        # Coluna C (índice 2) costuma ser o Nome
+        # Coluna BG (índice 58) costuma ser a Média Final
+        # Coluna BP (índice 67) costuma ser a Situação
+        
+        colunas_map = {
+            df.columns[2]: "Nome",  # Renomeamos para "Nome" para bater certo com o Mestre
+            df.columns[58]: "Média Final",
+            df.columns[67]: "Situação"
+        }
+        
+        df = df.rename(columns=colunas_map)
+        
+        # Filtra apenas o que interessa e remove linhas sem nome
+        df_limpo = df[["Nome", "Média Final", "Situação"]].dropna(subset=["Nome"])
+        return df_limpo
+        
+    except Exception as e:
+        st.warning(f"Não foi possível processar o ficheiro {file.name}. Verifique o formato.")
+        return pd.DataFrame()
 
 # --- LÓGICA PRINCIPAL ---
-nomes_mestre = []
-if import_file:
-    nomes_mestre = obter_lista_nomes(import_file)
-    st.success(f"Foram encontrados {len(nomes_mestre)} formandos no ficheiro de importação.")
 
-if eval_files:
-    dfs_notas = []
-    for f in eval_files:
-        dfs_notas.append(processar_notas(f))
+if arquivo_importacao:
+    # 1. Carregar a Lista Mestre
+    df_mestre = obter_nomes_mestre(arquivo_importacao)
     
-    df_consolidado = pd.concat(dfs_notas, ignore_index=True)
+    if df_mestre is not None:
+        st.info(f"✅ Lista Mestre carregada com {len(df_mestre)} formandos.")
+        
+        df_final = df_mestre.copy()
 
-    # Se tivermos a lista de nomes, garantimos que todos aparecem (mesmo sem nota)
-    if nomes_mestre:
-        df_nomes = pd.DataFrame({"Nome do Formando": nomes_mestre})
-        # Unimos a lista de nomes com as notas encontradas (Left Join)
-        df_final = pd.merge(df_nomes, df_consolidado, on="Nome do Formando", how="left")
-    else:
-        df_final = df_consolidado
+        # 2. Se houver grelhas, processar e juntar
+        if arquivos_grelha:
+            lista_notas = []
+            for arquivo in arquivos_grelha:
+                notas = processar_grelha_notas(arquivo)
+                lista_notas.append(notas)
+            
+            if lista_notas:
+                df_todas_notas = pd.concat(lista_notas, ignore_index=True)
+                
+                # --- O CRUZAMENTO (VLOOKUP AUTOMÁTICO) ---
+                # "Left Join": Mantém todos os nomes do Mestre e tenta encontrar a nota correspondente
+                df_final = pd.merge(df_mestre, df_todas_notas, on="Nome", how="left")
+                
+        else:
+            st.warning("A aguardar ficheiros de notas... (Mostrando apenas a lista de nomes)")
 
-    st.subheader("Edição de Dados e Notas")
-    # Ativação da edição
-    df_editado = st.data_editor(df_final, use_container_width=True, num_rows="dynamic")
+        # 3. Tabela Editável
+        st.write("### 📝 Verificar e Editar Dados")
+        st.write("Se algum nome não tiver nota, a célula aparecerá vazia. Pode preencher manualmente.")
+        
+        df_editado = st.data_editor(
+            df_final,
+            use_container_width=True,
+            num_rows="dynamic",
+            hide_index=True
+        )
 
-    # Botão de Exportação
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_editado.to_excel(writer, index=False, sheet_name='Pauta_Final')
-    
-    st.download_button(
-        label="📥 Descarregar Pauta Consolidada",
-        data=output.getvalue(),
-        file_name="Pauta_UFCD_9889.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        # 4. Botão de Download
+        st.divider()
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            df_editado.to_excel(writer, index=False, sheet_name='Pauta_Final')
+            
+        st.download_button(
+            label="💾 Descarregar Ficheiro Final",
+            data=buffer.getvalue(),
+            file_name="Pauta_Consolidada.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
+        )
+
 else:
-    st.info("Aguardando o upload das grelhas de avaliação...")
+    st.info("👈 Por favor, carregue primeiro o Ficheiro de Importação (com a coluna 'Nome') na barra lateral.")
