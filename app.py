@@ -83,4 +83,39 @@ if arquivo_importacao:
         # EDITOR INTERATIVO
         df_editado = st.data_editor(
             df_pratica,
-            use_container
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Ferramentas": st.column_config.NumberColumn("Ferramentas (0.6)", min_value=0, max_value=20),
+                "Equipamentos": st.column_config.NumberColumn("Equipamentos (0.2)", min_value=0, max_value=20),
+                "Estabilização": st.column_config.NumberColumn("Estabilização (0.2)", min_value=0, max_value=20),
+            }
+        )
+
+        # CÁLCULO AUTOMÁTICO DA MÉDIA
+        df_editado["Média Prática"] = (
+            (df_editado["Ferramentas"] * 0.6) + 
+            (df_editado["Equipamentos"] * 0.2) + 
+            (df_editado["Estabilização"] * 0.2)
+        )
+
+    with tab1:
+        st.subheader("Resultado Consolidado")
+        st.dataframe(df_editado[["Nome", "Média Prática"]], use_container_width=True, hide_index=True)
+
+    # --- DOWNLOAD ---
+    st.divider()
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_editado.to_excel(writer, index=False, sheet_name='Avaliacao_Pratica')
+    
+    st.download_button(
+        label="📥 Gerar Excel com Critérios e Médias",
+        data=output.getvalue(),
+        file_name="Avaliacao_UFCD_Final.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
+
+else:
+    st.info("👈 Por favor, carregue o Ficheiro de Importação para começar.")
