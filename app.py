@@ -2,76 +2,119 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="Portal de Avaliação UFCD", layout="wide")
+st.set_page_config(page_title="Avaliação Detalhada UFCD", layout="wide")
 
-# Inicializar base de dados na memória para guardar o que for preenchido
-if 'db_notas' not in st.session_state:
-    st.session_state.db_notas = {}
+if 'registos' not in st.session_state:
+    st.session_state.registos = {}
 
-st.title("📝 Formulário Individual de Avaliação")
+st.title("📑 Formulário de Avaliação por Subcategorias")
 
-# --- SIDEBAR: Carregamento de Estrutura ---
+# --- DEFINIÇÃO DOS CRITÉRIOS (Extraídos do seu ficheiro) ---
+CRITERIOS_DETALHADOS = {
+    "Operação com Ferramentas (60%)": [
+        "Transporta as ferramentas e procede a abertura e fecho em segurança",
+        "Opera com a ferramenta perpendicular ao objetivo de trabalho",
+        "Coloca-se do lado certo da ferramenta",
+        "Efetua comunicação sobre abertura ou corte de estruturas",
+        "Protege a(s) vítima(s) e o(s) socorrista(s) com proteção rígida"
+    ],
+    "Manuseamento de Equipamento (20%)": [
+        "Escolhe equipamento adequado à função",
+        "Transporta e opera os equipamentos em segurança",
+        "Opera corretamente com o grupo energético",
+        "Opera corretamente com equipamento de estabilização",
+        "Opera corretamente equipamento pneumático"
+    ],
+    "Estabilização e Segurança (20%)": [
+        "Sinaliza e delimita zonas de trabalho e zela pela segurança",
+        "Estabiliza o(s) veículo(s) acidentado(s) de forma adequada",
+        "Controla estabilização inicial e efetua estabilização progressiva",
+        "Efetua limpeza da zona de trabalho",
+        "Aplica as proteções nos pontos agressivos"
+    ]
+}
+
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Configuração")
-    f_import = st.file_uploader("1. Ficheiro Importação (Nomes K13)", type=["xlsx", "xls"])
-    f_criterios = st.file_uploader("2. Ficha de Avaliação Prática (Critérios)", type=["xlsx", "xls"])
+    f_import = st.file_uploader("Carregue Ficheiro Importação (K13)", type=["xlsx", "xls"])
 
-# --- PROCESSAMENTO INICIAL ---
-if f_import and f_criterios:
-    # Obter Nomes
+if f_import:
     df_nomes = pd.read_excel(f_import, skiprows=12, usecols="K").dropna()
     df_nomes.columns = ["Nome"]
-    lista_formandos = df_nomes["Nome"].tolist()
-
-    # Seleção do Formando
-    formando_selecionado = st.selectbox("🎯 Selecione o Formando para avaliar:", lista_formandos)
+    formando = st.selectbox("Seleccione o Formando:", df_nomes["Nome"].unique())
 
     st.divider()
 
-    # --- FORMULÁRIO DE AVALIAÇÃO ---
-    with st.form("form_avaliacao"):
-        st.subheader(f"Avaliação: {formando_selecionado}")
+    with st.form("ficha_detalhada"):
+        st.subheader(f"Avaliação de: {formando}")
         
-        col1, col2 = st.columns(2)
+        # --- AVALIAÇÃO TEÓRICA ---
+        nota_teorica = st.number_input("Nota Avaliação Teórica (0-20)", 0.0, 20.0, 10.0)
         
-        with col1:
-            st.markdown("### 📘 Avaliação Teórica")
-            nota_teorica = st.number_input("Nota do Teste (0-20)", min_value=0.0, max_value=20.0, step=0.1, key="teorica")
-
-        with col2:
-            st.markdown("### 🛠️ Avaliação Prática")
-            st.caption("Ponderação: Ferramentas (60%), Equipamentos (20%), Estabilização (20%)")
-            nota_ferr = st.slider("Operação com Ferramentas", 0, 20, 10)
-            nota_equip = st.slider("Manuseamento de Equipamentos", 0, 20, 10)
-            nota_estab = st.slider("Estabilização e Segurança", 0, 20, 10)
-
-        # Cálculo da Média Prática e Final
-        media_pratica = (nota_ferr * 0.6) + (nota_equip * 0.2) + (nota_estab * 0.2)
-        nota_final = (nota_teorica * 0.5) + (media_pratica * 0.5)
-        
-        situacao = "APROVADO" if nota_final >= 9.5 else "NÃO APROVADO"
-
-        st.info(f"**Resumo Atual:** Média Prática: {media_pratica:.2f} | **Nota Final: {nota_final:.2f}** ({situacao})")
-
-        submetido = st.form_submit_button("✅ Guardar Avaliação")
-        
-        if submetido:
-            # Guarda os dados no estado da sessão
-            st.session_state.db_notas[formando_selecionado] = {
-                "Nome": formando_selecionado,
-                "Teórica": nota_teorica,
-                "Prática_Ferramentas": nota_ferr,
-                "Prática_Equipamentos": nota_equip,
-                "Prática_Estabilização": nota_estab,
-                "Média_Prática": media_pratica,
-                "Nota_Final": nota_final,
-                "Situação": situacao
-            }
-            st.success(f"Dados de {formando_selecionado} guardados com sucesso!")
-
-    # --- TABELA DE RESUMO E EXPORTAÇÃO ---
-    if st.session_state.db_notas:
         st.divider()
-        st.subheader("📋 Registos Efetuados")
-        df_final = pd.DataFrame.from_dict(st.session_state.db_notas, orient='index')
-        st
+        st.markdown("### 🛠️ Avaliação Prática (Subcategorias)")
+        
+        notas_ferramentas = []
+        notas_equipamento = []
+        notas_estabilizacao = []
+
+        # Criar a interface para cada subcategoria
+        cols = st.columns(3)
+        
+        with cols[0]:
+            st.info("Operação com Ferramentas")
+            for item in CRITERIOS_DETALHADOS["Operação com Ferramentas (60%)"]:
+                n = st.select_slider(f"{item}", options=[1, 3, 5], value=3, key=f"ferr_{item}")
+                notas_ferramentas.append(n)
+        
+        with cols[1]:
+            st.warning("Manuseamento de Equipamento")
+            for item in CRITERIOS_DETALHADOS["Manuseamento de Equipamento (20%)"]:
+                n = st.select_slider(f"{item}", options=[1, 3, 5], value=3, key=f"equip_{item}")
+                notas_equipamento.append(n)
+        
+        with cols[2]:
+            st.success("Estabilização e Segurança")
+            for item in CRITERIOS_DETALHADOS["Estabilização e Segurança (20%)"]:
+                n = st.select_slider(f"{item}", options=[1, 3, 5], value=3, key=f"estab_{item}")
+                notas_estabilizacao.append(n)
+
+        # CÁLCULOS (Convertendo a escala 1-5 para 0-20 se necessário, ou mantendo a média)
+        # Média de cada bloco (escala 1 a 5) convertida para 0-20: (soma / (n*5)) * 20
+        med_ferr = (sum(notas_ferramentas) / (len(notas_ferramentas) * 5)) * 20
+        med_equip = (sum(notas_equipamento) / (len(notas_equipamento) * 5)) * 20
+        med_estab = (sum(notas_estabilizacao) / (len(notas_estabilizacao) * 5)) * 20
+        
+        media_pratica = (med_ferr * 0.6) + (med_equip * 0.2) + (med_estab * 0.2)
+        nota_final = (nota_teorica * 0.5) + (media_pratica * 0.5)
+
+        btn_guardar = st.form_submit_button("💾 Guardar Avaliação Completa")
+
+        if btn_guardar:
+            st.session_state.registos[formando] = {
+                "Nome": formando,
+                "Teórica": nota_teorica,
+                "Média Ferramentas": round(med_ferr, 2),
+                "Média Equipamento": round(med_equip, 2),
+                "Média Estabilização": round(med_estab, 2),
+                "Média Prática": round(media_pratica, 2),
+                "Nota Final": round(nota_final, 2),
+                "Resultado": "APROVADO" if nota_final >= 9.5 else "NÃO APROVADO"
+            }
+            st.balloons()
+
+    # --- TABELA DE RESULTADOS ---
+    if st.session_state.registos:
+        st.subheader("📋 Pauta Consolidada")
+        df_resumo = pd.DataFrame.from_dict(st.session_state.registos, orient='index')
+        st.dataframe(df_resumo, use_container_width=True)
+
+        # Exportação para Excel
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df_resumo.to_excel(writer, index=False, sheet_name='Resultados_UFCD9889')
+        
+        st.download_button("📥 Descarregar Pauta Final", output.getvalue(), "Pauta_UFCD9889.xlsx")
+
+else:
+    st.info("Por favor, carregue o ficheiro de importação na barra lateral.")
