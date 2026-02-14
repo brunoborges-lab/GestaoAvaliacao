@@ -85,4 +85,37 @@ if f_import:
                 st.markdown(f"**{cat}**")
                 soma = 0
                 for s in subcats:
-                    val =
+                    val = st.radio(f"{s[:30]}...", [1, 3, 5], index=1, key=f"{formando}_{s}")
+                    soma += val
+                res_pratica[cat] = (soma / (len(subcats) * 5)) * 20
+
+        # Cálculos
+        m_pratica = (res_pratica["Operação com Ferramentas (60%)"] * 0.6) + \
+                    (res_pratica["Manuseamento Equipamento (20%)"] * 0.2) + \
+                    (res_pratica["Estabilização e Segurança (20%)"] * 0.2)
+        
+        n_final = (nota_t * 0.5) + (m_pratica * 0.5)
+        
+        if st.form_submit_button("Guardar e Adicionar ao PDF"):
+            st.session_state.base_dados[formando] = {
+                "Teórica": nota_t,
+                "Média Prática": round(m_pratica, 2),
+                "Nota Final": round(n_final, 2),
+                "Situação": "APROVADO" if n_final >= 9.5 else "REPROVADO"
+            }
+            st.success(f"Avaliação de {formando} guardada!")
+
+    # --- EXPORTAÇÃO ---
+    if st.session_state.base_dados:
+        st.divider()
+        st.subheader("Gerar Documento Final")
+        st.write(f"Total de formandos avaliados: {len(st.session_state.base_dados)}")
+        
+        if st.button("🚀 Unir tudo num PDF Final"):
+            pdf_bytes = gerar_pdf_final(st.session_state.base_dados)
+            st.download_button(
+                label="📥 Descarregar PDF Único",
+                data=pdf_bytes,
+                file_name="Avaliacoes_Completas.pdf",
+                mime="application/pdf"
+            )
