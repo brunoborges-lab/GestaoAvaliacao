@@ -2,120 +2,76 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="Gestor UFCD - Critérios Práticos", layout="wide")
+st.set_page_config(page_title="Portal de Avaliação UFCD", layout="wide")
 
-st.title("🛠️ Sistema de Avaliação com Critérios Técnicos")
+# Inicializar base de dados na memória para guardar o que for preenchido
+if 'db_notas' not in st.session_state:
+    st.session_state.db_notas = {}
 
-# --- SIDEBAR ---
+st.title("📝 Formulário Individual de Avaliação")
+
+# --- SIDEBAR: Carregamento de Estrutura ---
 with st.sidebar:
-    st.header("📂 Upload de Configuração")
-    arquivo_importacao = st.file_uploader("1. Importação (Nomes em K13)", type=["xlsx", "xls"])
-    arquivo_criterios = st.file_uploader("2. Ficheiro de Avaliação Prática (Critérios)", type=["xlsx", "xls"])
-    arquivos_grelha = st.file_uploader("3. Grelhas de Notas (Formadores)", type=["xlsx", "xls"], accept_multiple_files=True)
+    st.header("⚙️ Configuração")
+    f_import = st.file_uploader("1. Ficheiro Importação (Nomes K13)", type=["xlsx", "xls"])
+    f_criterios = st.file_uploader("2. Ficha de Avaliação Prática (Critérios)", type=["xlsx", "xls"])
 
-# --- FUNÇÕES ---
+# --- PROCESSAMENTO INICIAL ---
+if f_import and f_criterios:
+    # Obter Nomes
+    df_nomes = pd.read_excel(f_import, skiprows=12, usecols="K").dropna()
+    df_nomes.columns = ["Nome"]
+    lista_formandos = df_nomes["Nome"].tolist()
 
-def obter_nomes(file):
-    df = pd.read_excel(file, skiprows=12, usecols="K")
-    df.columns = ["Nome"]
-    return df.dropna(subset=["Nome"]).drop_duplicates()
+    # Seleção do Formando
+    formando_selecionado = st.selectbox("🎯 Selecione o Formando para avaliar:", lista_formandos)
 
-def extrair_lista_criterios(file):
-    """Lê o ficheiro de avaliação para extrair as frases dos critérios"""
-    try:
-        # Lendo a folha específica de observação
-        df = pd.read_excel(file, sheet_name=None)
-        # Procuramos a folha que contém "Grelha" ou "Observação"
-        nome_folha = [s for s in df.keys() if 'Grelha' in s or 'Observação' in s][0]
-        df_criterios = df[nome_folha]
-        
-        # Extrair textos da coluna onde estão as descrições (ajustado para a coluna G/H)
-        # Aqui fazemos uma busca por palavras-chave para identificar as linhas certas
-        criterios = df_criterios.iloc[:, 6].dropna().tolist() # Coluna 6 costuma ter as descrições
-        return [c for c in criterios if len(str(c)) > 10] # Filtra apenas frases longas
-    except:
-        return ["Transporta as ferramentas...", "Opera perpendicular ao objetivo...", "Estabiliza o veículo..."]
-
-def processar_notas_detalhadas(file):
-    """Extrai as notas parciais das grelhas dos formadores"""
-    df = pd.read_excel(file, skiprows=12)
-    # Índices baseados na estrutura padrão da UFCD 9889
-    return {
-        "Nome": df.iloc[:, 2], 
-        "Ferramentas": df.iloc[:, 28],
-        "Equipamentos": df.iloc[:, 38],
-        "Estabilização": df.iloc[:, 48]
-    }
-
-# --- INTERFACE ---
-
-if arquivo_importacao:
-    df_mestre = obter_nomes(arquivo_importacao)
-    df_mestre["Nome"] = df_mestre["Nome"].astype(str).str.strip()
-
-    # Se carregou o ficheiro de critérios, mostra-os como ajuda visual
-    if arquivo_criterios:
-        with st.expander("🔍 Ver Critérios de Preenchimento Extraídos"):
-            crit_list = extrair_lista_criterios(arquivo_criterios)
-            for c in crit_list:
-                st.write(f"- {c}")
-
-    tab1, tab2 = st.tabs(["📋 Pauta Final", "📝 Avaliação Prática Detalhada"])
-
-    with tab2:
-        st.subheader("Preenchimento de Critérios")
-        
-        # Criar colunas base para edição
-        if arquivos_grelha:
-            # Lógica para consolidar notas se já existirem ficheiros
-            lista_aux = []
-            for f in arquivos_grelha:
-                data = processar_notas_detalhadas(f)
-                lista_aux.append(pd.DataFrame(data))
-            df_notas = pd.concat(lista_aux).drop_duplicates(subset=["Nome"])
-            df_pratica = pd.merge(df_mestre, df_notas, on="Nome", how="left")
-        else:
-            # Criar colunas vazias para preenchimento manual
-            df_pratica = df_mestre.copy()
-            for col in ["Ferramentas", "Equipamentos", "Estabilização"]:
-                df_pratica[col] = 0.0
-
-        # EDITOR INTERATIVO
-        df_editado = st.data_editor(
-            df_pratica,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Ferramentas": st.column_config.NumberColumn("Ferramentas (0.6)", min_value=0, max_value=20),
-                "Equipamentos": st.column_config.NumberColumn("Equipamentos (0.2)", min_value=0, max_value=20),
-                "Estabilização": st.column_config.NumberColumn("Estabilização (0.2)", min_value=0, max_value=20),
-            }
-        )
-
-        # CÁLCULO AUTOMÁTICO DA MÉDIA
-        df_editado["Média Prática"] = (
-            (df_editado["Ferramentas"] * 0.6) + 
-            (df_editado["Equipamentos"] * 0.2) + 
-            (df_editado["Estabilização"] * 0.2)
-        )
-
-    with tab1:
-        st.subheader("Resultado Consolidado")
-        st.dataframe(df_editado[["Nome", "Média Prática"]], use_container_width=True, hide_index=True)
-
-    # --- DOWNLOAD ---
     st.divider()
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_editado.to_excel(writer, index=False, sheet_name='Avaliacao_Pratica')
-    
-    st.download_button(
-        label="📥 Gerar Excel com Critérios e Médias",
-        data=output.getvalue(),
-        file_name="Avaliacao_UFCD_Final.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary"
-    )
 
-else:
-    st.info("👈 Por favor, carregue o Ficheiro de Importação para começar.")
+    # --- FORMULÁRIO DE AVALIAÇÃO ---
+    with st.form("form_avaliacao"):
+        st.subheader(f"Avaliação: {formando_selecionado}")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 📘 Avaliação Teórica")
+            nota_teorica = st.number_input("Nota do Teste (0-20)", min_value=0.0, max_value=20.0, step=0.1, key="teorica")
+
+        with col2:
+            st.markdown("### 🛠️ Avaliação Prática")
+            st.caption("Ponderação: Ferramentas (60%), Equipamentos (20%), Estabilização (20%)")
+            nota_ferr = st.slider("Operação com Ferramentas", 0, 20, 10)
+            nota_equip = st.slider("Manuseamento de Equipamentos", 0, 20, 10)
+            nota_estab = st.slider("Estabilização e Segurança", 0, 20, 10)
+
+        # Cálculo da Média Prática e Final
+        media_pratica = (nota_ferr * 0.6) + (nota_equip * 0.2) + (nota_estab * 0.2)
+        nota_final = (nota_teorica * 0.5) + (media_pratica * 0.5)
+        
+        situacao = "APROVADO" if nota_final >= 9.5 else "NÃO APROVADO"
+
+        st.info(f"**Resumo Atual:** Média Prática: {media_pratica:.2f} | **Nota Final: {nota_final:.2f}** ({situacao})")
+
+        submetido = st.form_submit_button("✅ Guardar Avaliação")
+        
+        if submetido:
+            # Guarda os dados no estado da sessão
+            st.session_state.db_notas[formando_selecionado] = {
+                "Nome": formando_selecionado,
+                "Teórica": nota_teorica,
+                "Prática_Ferramentas": nota_ferr,
+                "Prática_Equipamentos": nota_equip,
+                "Prática_Estabilização": nota_estab,
+                "Média_Prática": media_pratica,
+                "Nota_Final": nota_final,
+                "Situação": situacao
+            }
+            st.success(f"Dados de {formando_selecionado} guardados com sucesso!")
+
+    # --- TABELA DE RESUMO E EXPORTAÇÃO ---
+    if st.session_state.db_notas:
+        st.divider()
+        st.subheader("📋 Registos Efetuados")
+        df_final = pd.DataFrame.from_dict(st.session_state.db_notas, orient='index')
+        st
