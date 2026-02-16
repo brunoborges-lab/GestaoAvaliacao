@@ -2,178 +2,170 @@ import streamlit as st
 import pandas as pd
 import io
 from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
 import zipfile
 
-st.set_page_config(page_title="Preenchimento Automático Excel", layout="wide")
+st.set_page_config(page_title="Preenchimento Automático Grelhas", layout="wide")
 
-st.title("✍️ Preenchimento Automático de Grelhas")
-st.markdown("Este sistema pega no seu Excel original e desenha os 'X' nas colunas corretas.")
+st.title("🤖 Preenchimento Automático de Pautas")
+st.markdown("Preencha as notas na aplicação e o sistema escreve diretamente nos seus ficheiros Excel originais.")
 
-# --- 1. CONFIGURAÇÃO ---
+# --- 1. GESTÃO DE ESTADO (MEMÓRIA) ---
+if 'db_notas' not in st.session_state:
+    st.session_state.db_notas = {}
+
+# --- 2. UPLOAD DOS FICHEIROS ---
 with st.sidebar:
-    st.header("Uploads")
-    f_template = st.file_uploader("1. Modelo Vazio (.xlsx)", type=["xlsx"])
-    f_import = st.file_uploader("2. Lista de Nomes (K13)", type=["xlsx", "xls"])
+    st.header("Carregar Ficheiros Originais")
+    file_grelha = st.file_uploader("1. Grelha de Avaliação (Modelo)", type=["xlsx"])
+    file_import = st.file_uploader("2. Ficheiro de Importação (Nomes)", type=["xlsx"])
 
-# --- CRITÉRIOS (Texto Exato para procura) ---
-# DICA: O texto aqui tem de ser IGUAL ao que está no Excel para o robot o encontrar.
-CRITERIOS_TEXTO = {
-    "Ferramentas": [
-        "Transporta as ferramentas e procede a abertura e fecho das mesmas em segurança", # Ajuste se necessário
-        "Opera com a ferramenta prependicular ao obetivo de trabalho", # Notei "prependicular" no seu snippet
-        "Coloca-se do lado certo da ferramenta",
-        "Efectua cominucação sobre abertura ou corte de estruturas do veiculo",
-        "Protege a(s) vítima(s) e o(s) socorrista(s) com proteção rigida"
-    ],
-    "Equipamentos": [
-        "Escolhe  equipamento adequado à função",
-        "Transporta  e opera os equipamentos em segurança",
-        "Opera corretamente com o grupo energetico",
-        "Opera corretamente com equipamento de estabilização",
-        "Opera corretamente equipamento pneumático"
-    ],
-    "Estabilização": [
-        "Sinaliza e delimita zonas de trabalho e zela pela segurança",
-        "Estabiliza o(s) veículo(s) acidentado(s) de forma adequada",
-        "Controla estabilização inicial e efetua estabilização progressiva",
-        "Efetua limpeza da zona de trabalho",
-        "Aplica as proteções nos pontos agressivos"
-    ]
-}
-
-# --- FUNÇÃO MÁGICA DE PREENCHIMENTO ---
-def preencher_excel(template_bytes, nome_formando, avaliacao_dict):
-    # Carregar o Excel mantendo estilos
-    wb = load_workbook(io.BytesIO(template_bytes))
-    
-    # Tentar encontrar a folha correta (Grelha Observação)
-    sheet_name = None
-    for sheet in wb.sheetnames:
-        if "Grelha" in sheet or "M500" in sheet:
-            sheet_name = sheet
-            break
-    
-    if not sheet_name:
-        return None
-        
-    ws = wb[sheet_name]
-
-    # 1. Escrever o Nome (Procura pela célula que diz "NomeFormando" ou escreve numa posição fixa)
-    # Estratégia de Busca: Procura a célula que contém "Nome do Formando" e escreve na seguinte
-    nome_escrito = False
-    for row in ws.iter_rows(min_row=1, max_row=20):
+# --- 3. FUNÇÕES DE PROCESSAMENTO EXCEL ---
+def encontrar_coluna(ws, texto_procura, linha_max=15):
+    """Procura em que coluna está um determinado cabeçalho"""
+    for row in ws.iter_rows(min_row=1, max_row=linha_max):
         for cell in row:
-            if cell.value and isinstance(cell.value, str) and ("Nome" in cell.value or "Formando" in cell.value):
-                # Escreve na célula à direita (offset column=1)
-                ws.cell(row=cell.row, column=cell.column + 1).value = nome_formando
-                nome_escrito = True
-                break
-        if nome_escrito: break
+            if cell.value and isinstance(cell.value, str):
+                if texto_procura.lower() in cell.value.lower():
+                    return cell.column
+    return None
+
+def processar_ficheiros(bytes_grelha, bytes_import, dados_alunos):
+    # --- A. PREENCHER A GRELHA DE AVALIAÇÃO ---
+    wb_grelha = load_workbook(io.BytesIO(bytes_grelha))
     
-    # Se não encontrou lugar para o nome, tenta escrever numa célula comum (ajuste C3 se souber a exata)
-    if not nome_escrito:
-        ws['C3'] = nome_formando 
-
-    # 2. Marcar os X
-    # Definir colunas dos scores (Baseado no seu snippet, parecem estar à direita)
-    # VOU ASSUMIR COLUNAS FIXAS baseadas na estrutura visual comum.
-    # Se os X aparecerem no sítio errado, altere estes números:
-    COL_1 = 34  # Ajustar conforme o Excel (Coluna AH?)
-    COL_3 = 35  # Coluna AI?
-    COL_5 = 36  # Coluna AJ?
+    # Tenta encontrar a folha ativa ou a primeira
+    ws_grelha = wb_grelha.active
     
-    # Vamos tentar detetar as colunas dinamicamente procurando "1.0", "3.0", "5.0"
-    header_row = 0
-    for row in ws.iter_rows(min_row=1, max_row=10):
-        for cell in row:
-            if cell.value == 1.0: COL_1 = cell.column; header_row = cell.row
-            if cell.value == 3.0: COL_3 = cell.column
-            if cell.value == 5.0: COL_5 = cell.column
+    # Mapeamento Inteligente de Colunas (Procura pelos cabeçalhos)
+    col_teorica = encontrar_coluna(ws_grelha, "teórica") or 22  # Default aprox. V
+    col_ferramentas = encontrar_coluna(ws_grelha, "ferramentas") or 32 # Default aprox. AF
+    col_equipamentos = encontrar_coluna(ws_grelha, "equipamento") or 42 # Default aprox. AP
+    col_estabilizacao = encontrar_coluna(ws_grelha, "estabilização") or 52 # Default aprox. AZ
+    col_nome_grelha = 3 # Assumindo Coluna C para nomes na Grelha
 
-    # Preenchimento
-    for grupo, criterios in CRITERIOS_TEXTO.items():
-        for i, texto_criterio in enumerate(criterios):
-            nota = avaliacao_dict.get(f"{grupo}_{i}", 3) # Default é 3
-            
-            # Escolher coluna alvo
-            col_alvo = COL_3
-            if nota == 1: col_alvo = COL_1
-            if nota == 5: col_alvo = COL_5
-            
-            # Procurar a linha que tem este texto
-            for row in ws.iter_rows(min_row=header_row, max_row=60, min_col=1, max_col=10):
-                for cell in row:
-                    # Uso de "in" para ser flexível caso haja espaços extras
-                    if cell.value and isinstance(cell.value, str) and texto_criterio[:20] in cell.value:
-                        ws.cell(row=cell.row, column=col_alvo).value = "X"
-                        # Limpar as outras (opcional, caso o template já tenha X)
-                        break
-
-    # Guardar em memória
-    output = io.BytesIO()
-    wb.save(output)
-    return output.getvalue()
-
-# --- INTERFACE ---
-if f_template and f_import:
-    # Ler Nomes
-    df_nomes = pd.read_excel(f_import, skiprows=12, usecols="K").dropna()
-    lista_nomes = df_nomes.iloc[:, 0].unique().tolist()
-    
-    # Estado da Sessão para guardar avaliações
-    if 'dados_excel' not in st.session_state:
-        st.session_state.dados_excel = {}
-
-    col_esq, col_dir = st.columns([1, 2])
-
-    with col_esq:
-        st.subheader("Selecione o Formando")
-        formando = st.selectbox("Formando Atual:", lista_nomes)
+    # Escrever na Grelha
+    # Itera sobre as linhas da grelha para encontrar o aluno correspondente
+    for row in ws_grelha.iter_rows(min_row=10, max_row=100):
+        celula_nome = row[col_nome_grelha - 1] # Ajuste de índice 0
+        nome_grelha = str(celula_nome.value).strip() if celula_nome.value else ""
         
-        st.info("Preencha a grelha ao lado e clique em 'Guardar'. No final, poderá descarregar todos os Excel num ficheiro ZIP.")
+        # Se encontrarmos o nome na nossa base de dados
+        if nome_grelha in dados_alunos:
+            aluno = dados_alunos[nome_grelha]
+            
+            # Escrever valores nas colunas detetadas
+            ws_grelha.cell(row=celula_nome.row, column=col_teorica).value = aluno['teorica']
+            ws_grelha.cell(row=celula_nome.row, column=col_ferramentas).value = aluno['ferramentas']
+            ws_grelha.cell(row=celula_nome.row, column=col_equipamentos).value = aluno['equipamentos']
+            ws_grelha.cell(row=celula_nome.row, column=col_estabilizacao).value = aluno['estabilizacao']
 
-    with col_dir:
-        with st.form("form_x"):
-            st.subheader(f"Avaliação de: {formando}")
+    # --- B. PREENCHER O FICHEIRO DE IMPORTAÇÃO (NOTA FINAL) ---
+    wb_import = load_workbook(io.BytesIO(bytes_import))
+    ws_import = wb_import.active # Ou procurar folha específica
+    
+    # Identificar coluna de nomes (K = 11) e onde pôr a nota
+    col_k_idx = 11
+    col_destino_nota = encontrar_coluna(ws_import, "final") or 12 # Tenta achar "Nota Final" ou usa L (12)
+    
+    for row in ws_import.iter_rows(min_row=13, max_row=200): # Começa na linha 13
+        celula_nome = row[col_k_idx - 1] # Coluna K
+        nome_imp = str(celula_nome.value).strip() if celula_nome.value else ""
+        
+        if nome_imp in dados_alunos:
+            nota_final = dados_alunos[nome_imp]['final']
+            # Escreve a nota final na coluna definida
+            cell_nota = ws_import.cell(row=celula_nome.row, column=col_destino_nota)
+            cell_nota.value = nota_final
             
-            notas_temp = {}
+            # Formatação opcional (Verde se passou, Vermelho se reprovou)
+            if nota_final < 9.5:
+                cell_nota.fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+
+    # --- SALVAR E RETORNAR ---
+    out_grelha = io.BytesIO()
+    wb_grelha.save(out_grelha)
+    
+    out_import = io.BytesIO()
+    wb_import.save(out_import)
+    
+    return out_grelha.getvalue(), out_import.getvalue()
+
+# --- 4. INTERFACE DE ENTRADA DE DADOS ---
+if file_grelha and file_import:
+    # Carregar lista de formandos
+    df_nomes = pd.read_excel(file_import, skiprows=12, usecols="K").dropna()
+    lista_nomes = df_nomes.iloc[:, 0].astype(str).str.strip().tolist()
+
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.subheader("1. Selecione o Formando")
+        aluno_sel = st.selectbox("Formando:", lista_nomes)
+        
+        # Mostrar progresso
+        total = len(lista_nomes)
+        preenchidos = len(st.session_state.db_notas)
+        st.progress(preenchidos / total)
+        st.caption(f"{preenchidos} de {total} avaliados")
+
+    with col2:
+        st.subheader("2. Lance as Notas")
+        with st.form("form_notas"):
+            nt = st.number_input("Avaliação Teórica (0-20)", 0.0, 20.0, step=0.1)
             
-            # Gerar formulário dinâmico
-            for grupo, lista in CRITERIOS_TEXTO.items():
-                st.markdown(f"**{grupo}**")
-                for i, texto in enumerate(lista):
-                    # Slider de 1, 3, 5
-                    val = st.select_slider(f"...{texto[:40]}", options=[1, 3, 5], value=3, key=f"{formando}_{grupo}_{i}")
-                    notas_temp[f"{grupo}_{i}"] = val
+            st.markdown("**Avaliação Prática (0-20)**")
+            c1, c2, c3 = st.columns(3)
+            with c1: nf = st.number_input("Ferramentas (60%)", 0.0, 20.0)
+            with c2: ne = st.number_input("Equipamentos (20%)", 0.0, 20.0)
+            with c3: ns = st.number_input("Estabilização (20%)", 0.0, 20.0)
             
-            if st.form_submit_button("💾 Guardar e Processar Excel"):
-                # Gerar o Excel Individual IMEDIATAMENTE em memória
-                f_template.seek(0) # Reiniciar leitura do template
-                excel_preenchido = preencher_excel(f_template.read(), formando, notas_temp)
+            # Cálculo Prévio
+            media_pratica = (nf * 0.6) + (ne * 0.2) + (ns * 0.2)
+            nota_final = (nt * 0.5) + (media_pratica * 0.5)
+            
+            if st.form_submit_button("💾 Registar Notas"):
+                st.session_state.db_notas[aluno_sel] = {
+                    "teorica": nt,
+                    "ferramentas": nf,
+                    "equipamentos": ne,
+                    "estabilizacao": ns,
+                    "final": round(nota_final, 2)
+                }
+                st.success(f"Nota de {aluno_sel} registada: {nota_final:.2f}")
+
+    # --- 5. BOTÃO FINAL DE PROCESSAMENTO ---
+    st.divider()
+    if st.session_state.db_notas:
+        st.subheader("3. Exportação Final")
+        st.write("Quando terminar de lançar as notas de todos os alunos, clique abaixo.")
+        
+        if st.button("🚀 Preencher Ficheiros Excel Originais"):
+            file_grelha.seek(0); file_import.seek(0) # Reset ponteiros
+            
+            try:
+                novo_grelha, novo_import = processar_ficheiros(
+                    file_grelha.read(), 
+                    file_import.read(), 
+                    st.session_state.db_notas
+                )
                 
-                if excel_preenchido:
-                    st.session_state.dados_excel[formando] = excel_preenchido
-                    st.success(f"Ficheiro de {formando} gerado com sucesso!")
-                else:
-                    st.error("Não encontrei a folha 'Grelha Observação' no modelo.")
+                # Criar ZIP com os dois ficheiros
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w") as zf:
+                    zf.writestr("Grelha_Avaliacao_Preenchida.xlsx", novo_grelha)
+                    zf.writestr("Importacao_Com_Notas_Finais.xlsx", novo_import)
+                
+                st.download_button(
+                    label="📦 Descarregar Ficheiros Preenchidos (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name="Ficheiros_Finais_UFCD.zip",
+                    mime="application/zip",
+                    type="primary"
+                )
+            except Exception as e:
+                st.error(f"Erro ao processar ficheiros: {e}")
+                st.info("Verifique se os ficheiros originais não estão protegidos por palavra-passe ou corrompidos.")
 
-    # --- ÁREA DE DOWNLOAD (ZIP) ---
-    if st.session_state.dados_excel:
-        st.divider()
-        st.write(f"📂 Tem {len(st.session_state.dados_excel)} ficheiros prontos.")
-        
-        # Criar ZIP
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w") as zf:
-            for nome, dados in st.session_state.dados_excel.items():
-                # Nome do ficheiro limpo
-                nome_limpo = "".join([c for c in nome if c.isalnum() or c in (' ', '_')]).strip()
-                zf.writestr(f"Avaliacao_{nome_limpo}.xlsx", dados)
-        
-        st.download_button(
-            label="📦 Descarregar Todos os Ficheiros (ZIP)",
-            data=zip_buffer.getvalue(),
-            file_name="Todas_Avaliacoes_Preenchidas.zip",
-            mime="application/zip",
-            type="primary"
-        )
+else:
+    st.info("Por favor, carregue a Grelha Modelo e o Ficheiro de Importação na barra lateral.")
