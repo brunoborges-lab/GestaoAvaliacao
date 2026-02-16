@@ -4,7 +4,7 @@ import io
 import zipfile
 from openpyxl import load_workbook
 
-st.set_page_config(page_title="Gestor Avaliação", layout="wide")
+st.set_page_config(page_title="Gestor UFCD - Avaliação", layout="wide")
 
 # --- DEFINIÇÃO DOS TEXTOS PARA BUSCA (Devem ser idênticos ao Excel) ---
 CRITERIOS_EXCEL = {
@@ -72,7 +72,7 @@ def processar_modelo_macro(template_bytes, nome_aluno, notas_individuais):
     return output.getvalue()
 
 # --- INTERFACE STREAMLIT ---
-st.title("📂 Gerador de Avaliação")
+st.title("📂 Gestor UFCD - Avaliação")
 
 with st.sidebar:
     f_xlsm = st.file_uploader("Modelo Original (.xlsm)", type=["xlsm"])
@@ -89,4 +89,17 @@ if f_xlsm and f_nomes:
         
         for i, (cat, itens) in enumerate(CRITERIOS_EXCEL.items()):
             with [c1, c2, c3][i]:
-                st.
+                st.write(f"**{cat}**")
+                for idx, item in enumerate(itens):
+                    notas_form[f"{cat}_{idx}"] = st.radio(f"{item[:35]}...", [1, 3, 5], index=1, key=f"{cat}_{idx}")
+
+        if st.form_submit_button("Gerar Ficheiro Individual"):
+            f_xlsm.seek(0)
+            resultado = processar_modelo_macro(f_xlsm.read(), formando, notas_form)
+            
+            st.download_button(
+                label=f"📥 Baixar Ficheiro de {formando} (.xlsm)",
+                data=resultado,
+                file_name=f"Ficha_{formando}.xlsm",
+                mime="application/vnd.ms-excel.sheet.macroEnabled.12"
+            )
