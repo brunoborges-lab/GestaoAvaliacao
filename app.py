@@ -4,7 +4,7 @@ import io
 import zipfile
 from openpyxl import load_workbook
 
-st.set_page_config(page_title="Gestor UFCD - Macros XLSM", layout="wide")
+st.set_page_config(page_title="Gestor Avaliação", layout="wide")
 
 # --- DEFINIÇÃO DOS TEXTOS PARA BUSCA (Devem ser idênticos ao Excel) ---
 CRITERIOS_EXCEL = {
@@ -72,7 +72,7 @@ def processar_modelo_macro(template_bytes, nome_aluno, notas_individuais):
     return output.getvalue()
 
 # --- INTERFACE STREAMLIT ---
-st.title("📂 Gerador de Fichas XLSM (Com Macros)")
+st.title("📂 Gerador de Avaliação")
 
 with st.sidebar:
     f_xlsm = st.file_uploader("Modelo Original (.xlsm)", type=["xlsm"])
