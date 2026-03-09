@@ -6,7 +6,8 @@ from openpyxl import load_workbook
 
 # --- CONFIGURAÇÃO E CRITÉRIOS ---
 CRITERIOS = {
-    "Ferramentas": ["Transporta as ferramentas...", "Opera com a ferramenta...", "Coloca-se do lado certo...", "Efectua cominucação...", "Protege a(s) vítima(s)..."],
+    "Ferramentas": ["Transporta as ferramentas e procede a abertura e fecho das mesmas em segurança", "Opera com a ferramenta prependicular ao obetivo de trabalho", "Coloca-se do lado certo da ferramenta", "Efectua comunicação sobre abertura ou corte de estruturas do veiculo																										
+", "Protege a(s) vítima(s) e o(s) socorrista(s) com proteção rigida"],
     "Equipamentos": ["Escolhe  equipamento...", "Transporta  e opera...", "Opera corretamente grupo...", "Opera corretamente estabilização...", "Opera corretamente pneumático..."],
     "Estabilização": ["Sinaliza e delimita...", "Estabiliza o(s) veículo(s)...", "Controla estabilização...", "Efetua limpeza...", "Aplica as proteções..."]
 }
