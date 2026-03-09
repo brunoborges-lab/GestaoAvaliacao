@@ -1,98 +1,164 @@
 import streamlit as st
 import pandas as pd
 import io
-import zipfile
-from openpyxl import load_workbook
+import xlsxwriter
 
-# --- CONFIGURAÇÃO E CRITÉRIOS ---
-CRITERIOS = {
-    "Ferramentas": ["Transporta as ferramentas...", "Opera com a ferramenta...", "Coloca-se do lado certo...", "Efectua cominucação...", "Protege a(s) vítima(s)..."],
-    "Equipamentos": ["Escolhe  equipamento...", "Transporta  e opera...", "Opera corretamente grupo...", "Opera corretamente estabilização...", "Opera corretamente pneumático..."],
-    "Estabilização": ["Sinaliza e delimita...", "Estabiliza o(s) veículo(s)...", "Controla estabilização...", "Efetua limpeza...", "Aplica as proteções..."]
-}
+# Configuração da Página
+st.set_page_config(page_title="Gestor Avaliação UFCD 9889", layout="wide")
 
-if 'db' not in st.session_state: st.session_state.db = {}
+st.title("🚒 Gestor de Avaliação - Salvamento Rodoviário (UFCD 9889)")
+st.markdown("### Preencha os dados uma única vez e gere todos os relatórios.")
 
-st.title("📂 Gestor de Avaliação: Prática + Final")
+# --- DADOS DOS FORMANDOS (Extraídos do seu ficheiro 1) ---
+# Lista limpa de nomes baseada no seu upload
+nomes_formandos = [
+    "Cátia Filipa Vilar Regufe",
+    "Diogo Ferreira Soares",
+    "Erlisson Ribeiro de Oliveira Rocha",
+    "Fátima Milena Rocha Abreu de Oliveira",
+    "Fernando Bravo Figueroa",
+    "Francisco Manuel da Fonseca Ferreira",
+    "Jorge Miguel Ferreira Maranha Soares Miranda",
+    "José Duarte da Costa Machado Brás",
+    "Paulo Jorge Oliveira Maio",
+    "Pedro Alexandre Rodrigues Costa Ferreira"
+]
 
-# --- SIDEBAR: CARREGAMENTO DE MODELOS ---
-with st.sidebar:
-    st.header("Configuração")
-    f_import = st.file_uploader("1. Importação (Nomes Coluna K)", type=["xlsx"])
-    f_pratica = st.file_uploader("2. Modelo Prática (.xlsm)", type=["xlsm"])
-    f_final = st.file_uploader("3. Modelo Avaliação Final (.xlsx)", type=["xlsx"])
+# Criar DataFrame inicial
+df = pd.DataFrame(nomes_formandos, columns=["Nome do Formando"])
 
-if f_import and f_pratica and f_final:
-    # Extração de Nomes
-    df_nomes = pd.read_excel(f_import, skiprows=12, usecols="K").dropna()
-    lista_nomes = df_nomes.iloc[:, 0].astype(str).tolist()
+# --- BARRA LATERAL (CONFIGURAÇÕES) ---
+st.sidebar.header("⚙️ Configuração de Ponderações")
+peso_teorica = st.sidebar.slider("Peso Avaliação Teórica (%)", 0, 100, 50) / 100
+peso_pratica = st.sidebar.slider("Peso Avaliação Prática (%)", 0, 100, 50) / 100
+
+st.sidebar.subheader("Sub-parâmetros Prática (File 3)")
+peso_ferramentas = st.sidebar.number_input("Peso Operação Ferramentas", 0.0, 1.0, 0.6)
+peso_equipamentos = st.sidebar.number_input("Peso Manuseamento Equip.", 0.0, 1.0, 0.2)
+peso_estabilizacao = st.sidebar.number_input("Peso Estabilização/Seg.", 0.0, 1.0, 0.2)
+
+# --- ÁREA DE INSERÇÃO DE DADOS ---
+st.info("👇 Insira as notas abaixo (0 a 20). A Nota Final e a Situação são calculadas automaticamente.")
+
+# Adicionar colunas para entrada de dados
+# Inicializamos com valores padrão para facilitar a edição
+df["Nota Teórica"] = 0.0
+df["Prática: Ferramentas (0-20)"] = 0.0
+df["Prática: Equipamentos (0-20)"] = 0.0
+df["Prática: Estabilização (0-20)"] = 0.0
+
+# Editor de dados interativo
+edited_df = st.data_editor(
+    df,
+    column_config={
+        "Nota Teórica": st.column_config.NumberColumn(min_value=0, max_value=20, step=0.1, format="%.1f"),
+        "Prática: Ferramentas (0-20)": st.column_config.NumberColumn(min_value=0, max_value=20, step=0.1, help="Baseado na grelha de observação"),
+        "Prática: Equipamentos (0-20)": st.column_config.NumberColumn(min_value=0, max_value=20, step=0.1),
+        "Prática: Estabilização (0-20)": st.column_config.NumberColumn(min_value=0, max_value=20, step=0.1),
+    },
+    hide_index=True,
+    num_rows="dynamic",
+    use_container_width=True
+)
+
+# --- CÁLCULOS ---
+# 1. Calcular Nota Prática Ponderada
+edited_df["Nota Prática Final"] = (
+    (edited_df["Prática: Ferramentas (0-20)"] * peso_ferramentas) +
+    (edited_df["Prática: Equipamentos (0-20)"] * peso_equipamentos) +
+    (edited_df["Prática: Estabilização (0-20)"] * peso_estabilizacao)
+)
+
+# 2. Calcular Nota Final do Curso
+edited_df["Classificação Final"] = (
+    (edited_df["Nota Teórica"] * peso_teorica) +
+    (edited_df["Nota Prática Final"] * peso_pratica)
+)
+
+# 3. Definir Situação e Menção Qualitativa
+def get_situacao(nota):
+    return "APROVADO" if nota >= 9.5 else "NÃO APROVADO"
+
+def get_qualitativa(nota):
+    if nota < 9.5: return "Insuficiente"
+    if nota < 13.5: return "Suficiente"
+    if nota < 17.5: return "Bom"
+    return "Muito Bom"
+
+edited_df["Situação"] = edited_df["Classificação Final"].apply(get_situacao)
+edited_df["Menção"] = edited_df["Classificação Final"].apply(get_qualitativa)
+
+# Mostrar tabela de resultados
+st.markdown("### 📊 Pré-visualização dos Resultados")
+st.dataframe(edited_df.style.format({
+    "Nota Teórica": "{:.2f}",
+    "Nota Prática Final": "{:.2f}",
+    "Classificação Final": "{:.2f}"
+}).applymap(lambda x: 'background-color: #ffcccc' if x == 'NÃO APROVADO' else 'background-color: #ccffcc', subset=['Situação']), use_container_width=True)
+
+# --- EXPORTAÇÃO EXCEL ---
+st.markdown("---")
+st.header("📥 Download dos Ficheiros")
+
+def to_excel(df):
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     
-    formando = st.selectbox("Formando a avaliar:", lista_nomes)
-
-    # --- FORMULÁRIO DE LANÇAMENTO ---
-    with st.form("lancamento_notas"):
-        nt = st.number_input("Nota Teórica", 0.0, 20.0, 10.0)
+    # Formatos
+    header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1})
+    cell_fmt = workbook.add_format({'border': 1})
+    num_fmt = workbook.add_format({'border': 1, 'num_format': '0.00'})
+    
+    # --- FOLHA 1: Grelha Avaliação Final (Documento 7) ---
+    ws1 = workbook.add_worksheet("Grelha Avaliação Final")
+    ws1.write(0, 0, "GRELHA DE AVALIAÇÃO FINAL - UFCD 9889", header_fmt)
+    
+    headers1 = ["Nome do Formando", "Avaliação Qualitativa", "Avaliação Quantitativa", "Resultado Final"]
+    for col, h in enumerate(headers1):
+        ws1.write(2, col, h, header_fmt)
         
-        st.write("### Notas de Avaliação Prática (1, 3, 5)")
-        c1, c2, c3 = st.columns(3)
-        notas_p = {}
-        for i, (cat, itens) in enumerate(CRITERIOS.items()):
-            with [c1, c2, c3][i]:
-                st.markdown(f"**{cat}**")
-                for idx, item in enumerate(itens):
-                    notas_p[f"{cat}_{idx}"] = st.radio(f"{item[:30]}...", [1, 3, 5], index=1, key=f"{formando}_{cat}_{idx}")
+    for row, data in enumerate(df.itertuples(), start=3):
+        ws1.write(row, 0, data._1, cell_fmt) # Nome
+        ws1.write(row, 1, data.Menção, cell_fmt) # Qualitativa
+        ws1.write(row, 2, data._8, num_fmt) # Quantitativa (Classificação Final)
+        ws1.write(row, 3, data.Situação, cell_fmt) # Resultado
+        
+    # --- FOLHA 2: Grelha de Apoio (Baseado no Ficheiro 2) ---
+    ws2 = workbook.add_worksheet("Cálculo Detalhado")
+    headers2 = ["Nome", "Teórica (50%)", "Ferramentas (60%)", "Equipamentos (20%)", "Estabilização (20%)", "Prática Total (50%)", "Final"]
+    
+    for col, h in enumerate(headers2):
+        ws2.write(0, col, h, header_fmt)
+        
+    for row, data in enumerate(df.itertuples(), start=1):
+        ws2.write(row, 0, data._1, cell_fmt)
+        ws2.write(row, 1, data._2, num_fmt)
+        ws2.write(row, 2, data._3, num_fmt)
+        ws2.write(row, 3, data._4, num_fmt)
+        ws2.write(row, 4, data._5, num_fmt)
+        ws2.write(row, 5, data._7, num_fmt) # Pratica Final
+        ws2.write(row, 6, data._8, num_fmt) # Final
 
-        if st.form_submit_button("💾 Guardar Dados do Formando"):
-            # Cálculo das médias por categoria (0 a 20)
-            m_ferr = (sum([notas_p[f"Ferramentas_{i}"] for i in range(5)])/25)*20
-            m_equip = (sum([notas_p[f"Equipamentos_{i}"] for i in range(5)])/25)*20
-            m_estab = (sum([notas_p[f"Estabilização_{i}"] for i in range(5)])/25)*20
-            
-            st.session_state.db[formando] = {
-                "teorica": nt, "pratica_detalhe": notas_p,
-                "m_ferr": m_ferr, "m_equip": m_equip, "m_estab": m_estab
-            }
-            st.success(f"Avaliação de {formando} registada!")
+    # --- FOLHA 3: Ficha Prática (Resumo Ficheiro 3) ---
+    ws3 = workbook.add_worksheet("Parâmetros Práticos")
+    ws3.write(0, 0, "Resumo dos Parâmetros de Avaliação Prática (Checklist)", header_fmt)
+    ws3.write(1, 0, "Nota: Esta folha consolida os resultados da observação direta.", cell_fmt)
+    
+    # Escrever dados
+    for row, data in enumerate(df.itertuples(), start=3):
+        ws3.write(row, 0, f"Formando: {data._1}", header_fmt)
+        ws3.write(row, 1, f"Nota Ferramentas: {data._3}", cell_fmt)
+        ws3.write(row, 2, f"Nota Equipamentos: {data._4}", cell_fmt)
+        ws3.write(row, 3, f"Nota Estabilização: {data._5}", cell_fmt)
 
-    # --- BOTÃO DE EXPORTAÇÃO ---
-    if st.session_state.db:
-        st.divider()
-        if st.button("🚀 Gerar Todos os Ficheiros Preenchidos"):
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w") as zf:
-                
-                # 1. PROCESSAR FICHEIROS DE AVALIAÇÃO PRÁTICA (Individuais)
-                f_pratica.seek(0)
-                template_p = f_pratica.read()
-                for nome, dados in st.session_state.db.items():
-                    wb_p = load_workbook(io.BytesIO(template_p), keep_vba=True)
-                    ws_p = wb_p.active
-                    ws_p['C6'] = nome  # Nome do Formando
-                    
-                    # Marcar X (Exemplo Colunas AH, AI, AJ)
-                    col_map = {1: 34, 3: 35, 5: 36}
-                    # (Lógica de busca por texto omitida aqui por brevidade, mas segue o padrão anterior)
-                    
-                    p_out = io.BytesIO()
-                    wb_p.save(p_out)
-                    zf.writestr(f"Pratica_{nome}.xlsm", p_out.getvalue())
+    workbook.close()
+    return output.getvalue()
 
-                # 2. PROCESSAR FICHEIRO DE AVALIAÇÃO FINAL (Único)
-                f_final.seek(0)
-                wb_f = load_workbook(io.BytesIO(f_final.read()))
-                ws_f = wb_f.active
-                # Colunas: Teórica (U/21), Ferr (AF/32), Equip (AP/42), Estab (AZ/52)
-                for row in ws_f.iter_rows(min_row=12, max_row=100):
-                    nome_excel = str(row[2].value).strip() # Coluna C
-                    if nome_excel in st.session_state.db:
-                        d = st.session_state.db[nome_excel]
-                        ws_f.cell(row=row[0].row, column=21).value = d['teorica']
-                        ws_f.cell(row=row[0].row, column=32).value = d['m_ferr']
-                        ws_f.cell(row=row[0].row, column=42).value = d['m_equip']
-                        ws_f.cell(row=row[0].row, column=52).value = d['m_estab']
-                
-                f_out = io.BytesIO()
-                wb_f.save(f_out)
-                zf.writestr("Avaliacao_Final_UFCD.xlsx", f_out.getvalue())
+excel_data = to_excel(edited_df)
 
-            st.download_button("📥 Descarregar Dossier Completo (ZIP)", zip_buffer.getvalue(), "Dossier_UFCD.zip")
+st.download_button(
+    label="📥 Descarregar Excel Consolidado (3 em 1)",
+    data=excel_data,
+    file_name='Avaliacao_UFCD9889_Consolidada.xlsx',
+    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+)
