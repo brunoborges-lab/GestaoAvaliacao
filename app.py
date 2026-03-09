@@ -13,7 +13,7 @@ CRITERIOS = {
 
 if 'db' not in st.session_state: st.session_state.db = {}
 
-st.title("📂 Gestor de Avaliação: Prática + Final")
+st.title("Gestor de Avaliaçãol")
 
 # --- SIDEBAR: CARREGAMENTO DE MODELOS ---
 with st.sidebar:
