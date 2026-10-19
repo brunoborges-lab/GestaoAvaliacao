@@ -4,7 +4,7 @@ import io
 import xlsxwriter
 
 # Configuração da Página
-st.set_page_config(page_title="Gestor Avaliação UFCD 9889", layout="wide")
+st.set_page_config(page_title="1 Avaliação UFCD 9889", layout="wide")
 
 st.title("🚒 Gestor de Avaliação - Salvamento Rodoviário (UFCD 9889)")
 st.markdown("### Preencha os dados uma única vez e gere todos os relatórios.")
